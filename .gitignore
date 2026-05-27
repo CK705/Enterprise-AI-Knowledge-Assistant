@@ -1,0 +1,7 @@
+.env
+enterprise_rag_db/
+Archieve/
+__pycache__/
+venv/
+.venv/
+rag-frontend/node_modules/

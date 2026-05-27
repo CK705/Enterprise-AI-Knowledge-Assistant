@@ -1,0 +1,268 @@
+/* =========================================
+   ENTERPRISE RAG DASHBOARD STYLES
+   ========================================= */
+
+/* 1. Global Variables & Modern Background */
+:root {
+  --bg-color: #f1f5f9; /* Soft slate background */
+  --card-bg: #ffffff;
+  --text-main: #1e293b;
+  --text-muted: #475569;
+  --border-color: #e2e8f0;
+  
+  /* Pipeline Theme Colors */
+  --theme-a: #3b82f6; /* Blue */
+  --theme-b: #8b5cf6; /* Purple */
+  --theme-c: #10b981; /* Green */
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.assistant-container {
+  max-width: 1400px; /* Widened to fit 3 columns comfortably */
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+/* 2. Professional Header */
+.app-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.app-header h1 {
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  margin-bottom: 10px;
+  color: #0f172a;
+}
+
+.app-header p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+/* 3. The Search & Control Panel */
+.search-box-panel {
+  background: var(--card-bg);
+  padding: 24px;
+  border-radius: 16px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--border-color);
+  margin-bottom: 40px;
+}
+
+.search-bar input {
+  width: 100%;
+  padding: 16px 20px;
+  font-size: 1.1rem;
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+  background-color: #f8fafc;
+}
+
+.search-bar input:focus {
+  outline: none;
+  border-color: var(--theme-a);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.execution-controls {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+/* Unified, Sleek Buttons */
+.submit-btn {
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: white;
+  background-color: #1e293b;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.submit-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.submit-btn:disabled {
+  background-color: #94a3b8;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 4. THE SIDE-BY-SIDE GRID */
+.dashboard-grid {
+  display: grid;
+  /* This creates 3 equal columns side-by-side */
+  grid-template-columns: repeat(2, 1fr); 
+  gap: 24px;
+  align-items: start;
+}
+
+/* Responsive fallback: If screen gets too small, stack them */
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 5. The Pipeline Cards */
+.pipeline-card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-color);
+  border-top: 6px solid var(--border-color); /* Color replaced below */
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pipeline-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.pipeline-card h2 {
+  margin-top: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+/* Pipeline Specific Accent Colors */
+.style-naive { border-top-color: var(--theme-a); }
+.style-hybrid { border-top-color: var(--theme-b); }
+.style-multihop { border-top-color: var(--theme-c); }
+
+/* 6. Telemetry & Metric Pills */
+.metrics-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pill {
+  padding: 6px 12px;
+  background-color: #f1f5f9;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.pill.telemetry {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.pill.token-pill {
+  background-color: #fef3c7;
+  color: #b45309;
+}
+
+.pill.optimal {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+/* 7. Answer Viewport */
+.answer-viewport {
+  flex-grow: 1; /* Pushes content down to keep cards equal height */
+}
+
+.answer-viewport h4 {
+  margin-bottom: 8px;
+  color: #334155;
+  font-size: 1rem;
+}
+
+.answer-viewport p {
+  line-height: 1.6;
+  font-size: 0.95rem;
+  white-space: pre-wrap; /* Preserves LLM line breaks */
+}
+
+/* 8. The Agent Plan Box (Pipeline C) */
+.agent-plan-box {
+  margin-top: 20px;
+  background-color: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.agent-plan-box h5 {
+  margin: 0 0 10px 0;
+  color: #475569;
+}
+
+.agent-plan-box ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.agent-plan-box li {
+  margin-bottom: 4px;
+}
+
+
+
+/* PIPELINE D: CRAG STYLES */
+.style-selfcorrect { 
+  border-top-color: #f59e0b; /* Amber */
+}
+
+.pill.judge {
+  background-color: #fef3c7;
+  color: #b45309;
+}
+
+.correction-log-box {
+  margin-top: 20px;
+  background-color: #fffbeb;
+  border: 1px dashed #fcd34d;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.correction-log-box h5 {
+  margin: 0 0 10px 0;
+  color: #b45309;
+}
+
+.correction-log-box p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #92400e;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
