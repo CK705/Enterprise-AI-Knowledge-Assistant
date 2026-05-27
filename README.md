@@ -17,4 +17,4 @@ The pipelines were rigorously benchmarked using the **RAGAS framework** against 
 ## ⚙️ Installation & Setup
 1. Clone the repository:
    ```bash
-   git clone [https://github.com/CK705/Enterprise_RAG.git](https://github.com/CK705/Enterprise_RAG.git)
+   git clone [https://github.com/CK705/Enterprise-AI-Knowledge-Assistant.git]
