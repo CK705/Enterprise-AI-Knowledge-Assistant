@@ -23,6 +23,7 @@ dill==0.4.1
 diskcache==5.6.3
 distro==1.9.0
 docstring_parser==0.18.0
+docx2txt==0.9
 durationpy==0.10
 fastapi==0.136.1
 filelock==3.29.0
@@ -109,11 +110,14 @@ pydantic==2.13.4
 pydantic-settings==2.14.1
 pydantic_core==2.46.4
 Pygments==2.20.0
+PyJWT==2.13.0
 pyparsing==3.3.2
+pypdf==6.13.1
 PyPika==0.51.1
 pyproject_hooks==1.2.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
+python-multipart==0.0.31
 PyYAML==6.0.3
 ragas==0.4.3
 rank-bm25==0.2.2

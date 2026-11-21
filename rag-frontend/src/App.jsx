@@ -1,146 +1,230 @@
 import React, { useState } from 'react';
 import './App.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+
+const formatApiError = (payload) => {
+  if (!payload) return 'Upload failed.';
+
+  if (typeof payload === 'string') return payload;
+
+  if (typeof payload === 'object') {
+    if (payload.detail) return formatApiError(payload.detail);
+    if (payload.message) return payload.message;
+    if (payload.error) return payload.error;
+    return JSON.stringify(payload);
+  }
+
+  return String(payload);
+};
+
 function App() {
+  // --- PHASE 2: AUTHENTICATION STATE ---
+  const [token, setToken] = useState(localStorage.getItem("token") || null);
+  const [userRole, setUserRole] = useState(localStorage.getItem("role") || null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+
+  // --- PHASE 2: INGESTION STATE ---
+  const [file, setFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState("");
+
+  // --- PIPELINE STATES ---
   const [question, setQuestion] = useState("");
-  
-  // Independent loading states
   const [loadingA, setLoadingA] = useState(false);
   const [loadingB, setLoadingB] = useState(false);
   const [loadingC, setLoadingC] = useState(false);
   const [loadingD, setLoadingD] = useState(false);
   
-  // Independent result states
   const [naiveResult, setNaiveResult] = useState(null);
   const [hybridResult, setHybridResult] = useState(null);
   const [multiHopResult, setMultiHopResult] = useState(null);
   const [selfCorrectResult, setSelfCorrectResult] = useState(null);
 
-  // --- PIPELINE A TRIGGER ---
-  const runNaive = async () => {
-    if (!question.trim()) return;
-    setLoadingA(true);
-    setNaiveResult(null);
+  // --- AUTHENTICATION LOGIC ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
     try {
-      const data = await fetch('http://localhost:8000/query/naive', {
+      const res = await fetch(`${API_BASE_URL}/api/documents/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question })
-      }).then(res => res.json());
-      setNaiveResult(data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingA(false);
+        body: JSON.stringify({ username, password })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setToken(data.access_token);
+        setUserRole(data.role);
+        localStorage.setItem("token", data.access_token);
+        localStorage.setItem("role", data.role);
+        setAuthError("");
+      } else {
+        setAuthError("❌ Invalid corporate credentials");
+      }
+    } catch (err) {
+      setAuthError("⚠️ Backend offline. Please start FastAPI.");
     }
   };
 
-  // --- PIPELINE B TRIGGER ---
-  const runHybrid = async () => {
-    if (!question.trim()) return;
-    setLoadingB(true);
-    setHybridResult(null);
+  const handleLogout = () => {
+    setToken(null);
+    setUserRole(null);
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
+  };
+
+  // --- INGESTION LOGIC ---
+  const handleFileUpload = async (e) => {
+    e.preventDefault();
+    if (!file) {
+      setUploadStatus("❌ Please choose a PDF or DOCX file first.");
+      return;
+    }
+    if (!token) {
+      setUploadStatus("❌ Please log in before uploading a document.");
+      return;
+    }
+
+    setUploadStatus("Uploading & Vectorizing...");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
     try {
-      const data = await fetch('http://localhost:8000/query/hybrid', {
+      const res = await fetch(`${API_BASE_URL}/api/documents/upload`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question })
-      }).then(res => res.json());
-      setHybridResult(data);
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+
+      const responseText = await res.text();
+      if (res.ok) {
+        setUploadStatus("✅ Document uploaded and indexed successfully.");
+        setFile(null);
+      } else {
+        let detail = 'Upload failed.';
+        try {
+          const payload = JSON.parse(responseText);
+          detail = formatApiError(payload);
+        } catch {
+          detail = responseText || detail;
+        }
+        setUploadStatus(`❌ ${detail}`);
+      }
     } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingB(false);
+      setUploadStatus("⚠️ Server Error during ingestion. Check the backend is running.");
     }
   };
 
-  // --- PIPELINE C TRIGGER ---
-  const runMultiHop = async () => {
+  // --- SECURE QUERY LOGIC (PHASE 1 WRAPPERS) ---
+  const fetchSecurePipeline = async (endpoint, setter, loader) => {
     if (!question.trim()) return;
-    setLoadingC(true);
-    setMultiHopResult(null);
+    loader(true);
+    setter(null);
     try {
-      const data = await fetch('http://localhost:8000/query/multihop', {
+      const data = await fetch(`${API_BASE_URL}/${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` // Injecting the JWT Token
+        },
         body: JSON.stringify({ question: question })
       }).then(res => res.json());
-      setMultiHopResult(data);
+      setter(data);
     } catch (error) {
       console.error(error);
     } finally {
-      setLoadingC(false);
+      loader(false);
     }
   };
 
-  // --- PIPELINE D TRIGGER (NEW) ---
-  const runSelfCorrect = async () => {
-    if (!question.trim()) return;
-    setLoadingD(true);
-    setSelfCorrectResult(null);
-    try {
-      const data = await fetch('http://localhost:8000/query/self_correct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question })
-      }).then(res => res.json());
-      setSelfCorrectResult(data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingD(false);
-    }
-  };
+  // --- LOGIN SCREEN RENDER ---
+  if (!token) {
+    return (
+      <div className="login-wrapper">
+        <div className="login-card">
+          <h2>🏢 Enterprise Knowledge SSO</h2>
+          <p>Phase II Secure Authentication Gateway</p>
+          <form onSubmit={handleLogin} className="login-form">
+            <input type="text" placeholder="Username (e.g., admin_alice)" value={username} onChange={e => setUsername(e.target.value)} required />
+            <input type="password" placeholder="Password (password123)" value={password} onChange={e => setPassword(e.target.value)} required />
+            <button type="submit" className="login-btn">Authenticate</button>
+            {authError && <p className="error-text">{authError}</p>}
+          </form>
+        </div>
+      </div>
+    );
+  }
 
+  // --- MAIN DASHBOARD RENDER ---
   return (
     <div className="assistant-container">
-      <header className="app-header">
-        <h1>🤖 Enterprise Knowledge Assistant</h1>
-        <p>Phase I — Real-Time Multi-Pipeline Benchmarking</p>
+      <header className="app-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1>🤖 Enterprise Knowledge Assistant</h1>
+          <p>Omni-Modal Architecture — Secure Environment</p>
+        </div>
+        <div className="auth-badge">
+          <span className={`role-pill role-${userRole?.toLowerCase()}`}>Badge: {userRole}</span>
+          <button onClick={handleLogout} className="logout-btn">Logout</button>
+        </div>
       </header>
 
-      <section className="search-box-panel">
-        <div className="search-bar" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <input 
-            type="text" 
-            placeholder="Ask anything requiring connected cross-document corporate data..."
-            value={question} 
-            onChange={(e) => setQuestion(e.target.value)}
-            disabled={loadingA || loadingB || loadingC || loadingD}
-          />
-          
-          <div className="execution-controls" style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button onClick={runNaive} disabled={loadingA} className="submit-btn">
-              {loadingA ? "🤔 Running A..." : "Run Naive RAG"}
-            </button>
-            <button onClick={runHybrid} disabled={loadingB} className="submit-btn">
-              {loadingB ? "🤔 Running B..." : "Run Hybrid RAG"}
-            </button>
-            <button onClick={runMultiHop} disabled={loadingC} className="submit-btn" style={{ backgroundColor: '#10b981' }}>
-              {loadingC ? "🤔 Running C..." : "Run Multi-Hop"}
-            </button>
-            <button onClick={runSelfCorrect} disabled={loadingD} className="submit-btn" style={{ backgroundColor: '#f59e0b' }}>
-              {loadingD ? "⚖️ Grading & Running D..." : "Run Self-Correcting (CRAG)"}
-            </button>
+      <section className="control-panel" style={{ display: 'flex', gap: '20px', marginBottom: '30px', flexWrap: 'wrap' }}>
+        
+        {/* QUERY INTERFACE (Available to all users) */}
+        <div className="search-box-panel" style={{ flex: '2', minWidth: '400px' }}>
+          <h3>Knowledge Retrieval</h3>
+          <div className="search-bar" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <input 
+              type="text" 
+              placeholder="Ask anything requiring connected cross-document corporate data..."
+              value={question} 
+              onChange={(e) => setQuestion(e.target.value)}
+              disabled={loadingA || loadingB || loadingC || loadingD}
+            />
+            <div className="execution-controls" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button onClick={() => fetchSecurePipeline('query/naive', setNaiveResult, setLoadingA)} disabled={loadingA} className="submit-btn">
+                {loadingA ? "🤔..." : "Naive"}
+              </button>
+              <button onClick={() => fetchSecurePipeline('query/hybrid', setHybridResult, setLoadingB)} disabled={loadingB} className="submit-btn">
+                {loadingB ? "🤔..." : "Hybrid"}
+              </button>
+              <button onClick={() => fetchSecurePipeline('query/multihop', setMultiHopResult, setLoadingC)} disabled={loadingC} className="submit-btn" style={{ backgroundColor: '#10b981' }}>
+                {loadingC ? "🤔..." : "Multi-Hop"}
+              </button>
+              <button onClick={() => fetchSecurePipeline('query/self_correct', setSelfCorrectResult, setLoadingD)} disabled={loadingD} className="submit-btn" style={{ backgroundColor: '#f59e0b' }}>
+                {loadingD ? "⚖️..." : "CRAG"}
+              </button>
+            </div>
           </div>
+        </div>
+
+        {/* DATA INGESTION PANEL (available to all authenticated users) */}
+        <div className="admin-ingest-panel" style={{ flex: '1', minWidth: '300px', background: '#f8fafc', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+          <h3 style={{ marginTop: 0, color: '#0f172a' }}>📥 Data Ingestion</h3>
+          <form onSubmit={handleFileUpload} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <input type="file" accept=".pdf,.docx" onChange={(e) => setFile(e.target.files[0])} required />
+            
+            <button type="submit" className="submit-btn" style={{ backgroundColor: '#3b82f6', width: '100%' }}>
+              Upload & Ingest Vector
+            </button>
+            {uploadStatus && <p style={{ fontSize: '0.85rem', margin: 0, color: uploadStatus.includes('✅') ? 'green' : 'red' }}>{uploadStatus}</p>}
+          </form>
         </div>
       </section>
 
+      {/* --- DASHBOARD GRID (Remains largely the same) --- */}
       <section className="dashboard-grid">
-        
         {/* PANEL A DISPLAY */}
         <div className="pipeline-card style-naive">
           <h2>Pipeline A: Naive RAG</h2>
           <div className="metrics-row">
-            <span className="pill">Vector Search</span>
             {naiveResult?.latency && <span className="pill telemetry">⏱️ {naiveResult.latency}s</span>}
-            {naiveResult?.tokens && (
-              <span className="pill telemetry token-pill">🪙 In: {naiveResult.tokens.input_tokens || 0} | Out: {naiveResult.tokens.output_tokens || 0}</span>
-            )}
           </div>
           <div className="answer-viewport">
-            <h4>🎯 Response:</h4>
-            <p>{naiveResult ? naiveResult.answer : (loadingA && !naiveResult ? "Processing Turn..." : "Awaiting execution...")}</p>
+            <p>{naiveResult ? naiveResult.answer : (loadingA ? "Processing Turn..." : "Awaiting execution...")}</p>
           </div>
         </div>
 
@@ -148,15 +232,10 @@ function App() {
         <div className="pipeline-card style-hybrid">
           <h2>Pipeline B: Hybrid RAG</h2>
           <div className="metrics-row">
-            <span className="pill">Vector + BM25</span>
             {hybridResult?.latency && <span className="pill telemetry">⏱️ {hybridResult.latency}s</span>}
-            {hybridResult?.tokens && (
-              <span className="pill telemetry token-pill">🪙 In: {hybridResult.tokens.input_tokens || 0} | Out: {hybridResult.tokens.output_tokens || 0}</span>
-            )}
           </div>
           <div className="answer-viewport">
-            <h4>🎯 Response:</h4>
-            <p>{hybridResult ? hybridResult.answer : (loadingB && !hybridResult ? "Processing Turn..." : "Awaiting execution...")}</p>
+            <p>{hybridResult ? hybridResult.answer : (loadingB ? "Processing Turn..." : "Awaiting execution...")}</p>
           </div>
         </div>
 
@@ -164,49 +243,23 @@ function App() {
         <div className="pipeline-card style-multihop">
           <h2>Pipeline C: Agentic Multi-Hop</h2>
           <div className="metrics-row">
-            <span className="pill optimal">Autonomous Planner</span>
             {multiHopResult?.latency && <span className="pill telemetry optimal">⏱️ {multiHopResult.latency}s</span>}
-            {multiHopResult?.tokens && (
-              <span className="pill telemetry optimal token-pill">🪙 In: {multiHopResult.tokens.input_tokens || 0} | Out: {multiHopResult.tokens.output_tokens || 0}</span>
-            )}
           </div>
           <div className="answer-viewport">
-            <h4>🎯 Response:</h4>
-            <p className="reasoned-response">{multiHopResult ? multiHopResult.answer : (loadingC && !multiHopResult ? "Decomposing queries & linking hops..." : "Awaiting execution...")}</p>
+            <p className="reasoned-response">{multiHopResult ? multiHopResult.answer : (loadingC ? "Decomposing queries & linking hops..." : "Awaiting execution...")}</p>
           </div>
-          {multiHopResult?.plan && (
-            <div className="agent-plan-box">
-              <h5>🧠 Generated Search Plan:</h5>
-              <ul>
-                <li><strong>Hop 1:</strong> "{multiHopResult.plan.hop1}"</li>
-                <li><strong>Hop 2:</strong> "{multiHopResult.plan.hop2}"</li>
-              </ul>
-            </div>
-          )}
         </div>
 
-        {/* PANEL D DISPLAY (NEW) */}
+        {/* PANEL D DISPLAY */}
         <div className="pipeline-card style-selfcorrect">
           <h2>Pipeline D: CRAG</h2>
           <div className="metrics-row">
-            <span className="pill judge">LLM-as-a-Judge</span>
             {selfCorrectResult?.latency && <span className="pill telemetry judge">⏱️ {selfCorrectResult.latency}s</span>}
-            {selfCorrectResult?.tokens && (
-              <span className="pill telemetry judge token-pill">🪙 In: {selfCorrectResult.tokens.input_tokens || 0} | Out: {selfCorrectResult.tokens.output_tokens || 0}</span>
-            )}
           </div>
           <div className="answer-viewport">
-            <h4>🎯 Response:</h4>
-            <p>{selfCorrectResult ? selfCorrectResult.answer : (loadingD && !selfCorrectResult ? "Grading retrieved context..." : "Awaiting execution...")}</p>
+            <p>{selfCorrectResult ? selfCorrectResult.answer : (loadingD ? "Grading retrieved context..." : "Awaiting execution...")}</p>
           </div>
-          {selfCorrectResult?.correction_log && (
-            <div className="correction-log-box">
-              <h5>🕵️‍♂️ Internal Grader Telemetry:</h5>
-              <p>{selfCorrectResult.correction_log}</p>
-            </div>
-          )}
         </div>
-
       </section>
     </div>
   );
