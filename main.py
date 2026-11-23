@@ -1,6 +1,8 @@
 import os
 import json
 import time
+from hashlib import sha256
+from threading import Lock
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
@@ -33,9 +35,17 @@ DB_DIR = BASE_DIR / "enterprise_rag_db"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
-llm = ChatGroq(temperature=0, model_name="llama-3.3-70b-versatile")
+llm = ChatGroq(temperature=0, model_name="openai/gpt-oss-120b")
+# llm = ChatGroq(temperature=0, model_name="openai/gpt-oss-safeguard-20b")
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
-vectorstore = Chroma(persist_directory=str(DB_DIR), embedding_function=embeddings)
+vectorstore = Chroma(
+    collection_name="langchain",
+    persist_directory=str(DB_DIR),
+    embedding_function=embeddings,
+)
+index_lock = Lock()
+document_loaders = {".pdf": PyPDFLoader, ".docx": Docx2txtLoader}
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 
 
 def normalize_allowed_roles(metadata: dict) -> set[str]:
@@ -57,49 +67,92 @@ def filter_docs_by_role(docs: List[Document], user_role: str) -> List[Document]:
     return docs or []
 
 
+def index_document(path: Path, filename: str, owner_id: str, destination: Path | None = None):
+    """Index a staged upload or a file already in storage."""
+    loader = document_loaders.get(Path(filename).suffix.lower())
+    if loader is None:
+        raise ValueError("Only PDF and DOCX files are supported.")
+    chunks = [
+        chunk for chunk in text_splitter.split_documents(loader(path).load())
+        if chunk.page_content.strip()
+    ]
+    if not chunks:
+        raise ValueError("The document contains no extractable text.")
+
+    digest = sha256()
+    with path.open("rb") as document:
+        for block in iter(lambda: document.read(1024 * 1024), b""):
+            digest.update(block)
+    revision = digest.hexdigest()
+    chunk_ids = [f"{filename}:{revision}:{i}" for i in range(len(chunks))]
+    for chunk in chunks:
+        if "file_path" in chunk.metadata:
+            chunk.metadata["file_path"] = str(destination or path)
+        chunk.metadata.update(
+            source=filename,
+            owner_id=owner_id,
+            allowed_roles="Admin,Manager,Employee",
+        )
+
+    with index_lock:
+        previous = indexed_chunk_ids(filename)
+        new_ids = sorted(set(chunk_ids).difference(previous))
+        try:
+            vectorstore.add_documents(chunks, ids=chunk_ids)
+            if destination is not None:
+                path.replace(destination)
+        except Exception:
+            if new_ids:
+                vectorstore.delete(ids=new_ids)
+            raise
+
+        stale_ids = sorted(set(previous).difference(chunk_ids))
+        if stale_ids:
+            vectorstore.delete(ids=stale_ids)
+
+
+def indexed_chunk_ids(filename: str) -> list[str]:
+    existing = vectorstore.get(include=["metadatas"])
+    return [
+        chunk_id
+        for chunk_id, metadata in zip(existing["ids"], existing["metadatas"])
+        if metadata and Path(metadata.get("source") or "").name.casefold() == filename.casefold()
+    ]
+
+
+def delete_indexed_document(path: Path) -> None:
+    with index_lock:
+        ids = indexed_chunk_ids(path.name)
+        if ids:
+            vectorstore.delete(ids=ids)
+        path.unlink()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Scans the new Decoupled Storage Layer on startup."""
-    try:
-        existing_data = vectorstore.get()
-        if not existing_data or not existing_data.get("documents"):
-            print(
-                "⚠️ Empty DB detected. Scanning secure storage layer for ingestion..."
-            )
-            parsed_docs = []
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=800, chunk_overlap=100
-            )
-
-            for filename in os.listdir(STORAGE_DIR):
-                file_path = os.path.join(STORAGE_DIR, filename)
-                print(f"📄 Parsing: {filename}")
-                if filename.endswith(".pdf"):
-                    loader = PyPDFLoader(file_path)
-                elif filename.endswith(".docx"):
-                    loader = Docx2txtLoader(file_path)
-                else:
-                    continue
-
-                raw_pages = loader.load()
-                chunks = text_splitter.split_documents(raw_pages)
-
-                # Base metadata for initial files
-                for chunk in chunks:
-                    chunk.metadata["allowed_roles"] = ["Admin", "Manager", "Employee"]
-                    chunk.metadata["source"] = filename
-                parsed_docs.extend(chunks)
-
-            if parsed_docs:
-                print(f"⚡ Indexing {len(parsed_docs)} chunks...")
-                vectorstore.add_documents(parsed_docs)
-                print("✅ Vector DB built and fully locked into dimensions!")
-    except Exception as e:
-        print(f"⚠️ Startup Exception: {str(e)}")
+    """Backfill stored documents missing from the retrieval collection."""
+    existing = vectorstore.get(include=["metadatas"])
+    indexed_names = {
+        Path(metadata["source"]).name.casefold()
+        for metadata in existing["metadatas"]
+        if metadata and metadata.get("source")
+    }
+    for path in STORAGE_DIR.iterdir():
+        if (
+            path.is_file()
+            and path.suffix.lower() in document_loaders
+            and path.name.casefold() not in indexed_names
+        ):
+            try:
+                index_document(path, path.name, owner_id="system")
+            except Exception as exc:
+                print(f"Failed to index {path.name}: {exc}")
     yield
 
 
 app = FastAPI(title="Enterprise Omni-Modal RAG", lifespan=lifespan)
+app.state.index_document = index_document
+app.state.delete_indexed_document = delete_indexed_document
 app.include_router(auth_storage.router)
 
 app.add_middleware(
@@ -281,7 +334,7 @@ async def query_crag(
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", 8001))
     host = os.getenv("HOST", "0.0.0.0")
     dev_reload = os.getenv("DEV_RELOAD", "False").lower() in ("1", "true", "yes")
 

@@ -1,11 +1,9 @@
-import os
 import shutil
 from pathlib import Path
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Query
+from tempfile import TemporaryDirectory
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
-import chromadb
 
 router = APIRouter(prefix="/api/documents", tags=["Secure Document Ingestion"])
 security = HTTPBearer()
@@ -15,14 +13,7 @@ SECRET_KEY = "ENTERPRISE_CORE_SECRET_KEY_PLACEHOLDER"  # Store in .env in produc
 ALGORITHM = "HS256"
 BASE_DIR = Path(__file__).resolve().parent.parent
 STORAGE_DIR = BASE_DIR / "raw_documents"
-VECTOR_DB_DIR = BASE_DIR / "enterprise_rag_db"
-
-# Ensure absolute physical directories exist securely
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-# Initialize decoupled persistent vector database
-chroma_client = chromadb.PersistentClient(path=str(VECTOR_DB_DIR))
-collection = chroma_client.get_or_create_collection(name="secure_enterprise_knowledge")
 
 
 def verify_token_and_get_role(
@@ -92,55 +83,44 @@ async def authenticate_user(login_data: LoginRequest):
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_document(
+def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     auth_data: dict = Depends(verify_token_and_get_role),
 ):
-    """
-    Ingestion is intentionally public to the app: documents are written to disk and
-    indexed without document-level RBAC restrictions so every pipeline can retrieve them.
-    """
-    file_path = os.path.join(STORAGE_DIR, file.filename)
+    """Store and index the uploaded document before reporting success."""
+    filename = file.filename
+    if not filename or Path(filename).name != filename or any(
+        character in filename for character in "/\\:"
+    ):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".pdf", ".docx"}:
+        raise HTTPException(status_code=415, detail="Only PDF and DOCX files are supported.")
 
-    # 2. Securely stream payload to isolated persistent storage
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Physical disk write failure: {str(e)}"
-        )
-
-    # 3. Text Processing Loop (Simulated chunking for demonstration)
-    # Inside Phase 2, this will route into your existing LangChain chunker/Gemini Embeddings pipeline
-    simulated_chunks = [
-        f"Sample chunk from {file.filename} dealing with operational parameters."
-    ]
-
-    for idx, chunk in enumerate(simulated_chunks):
-        # Generate a distinct deterministic vector identifier
-        chunk_id = f"{file.filename}_chunk_{idx}"
-
-        # Inject standard structural context paired with deep security access lists
-        metadata_payload = {
-            "source": file.filename,
-            "owner_id": auth_data["user_id"],
-            "allowed_roles": ["Admin", "Manager", "Employee"],
-        }
-
-        # Upsert securely to the decoupled vector DB
-        # collection.add(embeddings=[...], documents=[chunk], metadatas=[metadata_payload], ids=[chunk_id])
+        with TemporaryDirectory(dir=STORAGE_DIR) as directory:
+            staged = Path(directory) / f"upload{suffix}"
+            with staged.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            request.app.state.index_document(
+                staged, filename, auth_data["user_id"], STORAGE_DIR / filename
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Could not extract document text.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Document indexing failed.") from exc
 
     return {
         "status": "Success",
-        "filename": file.filename,
+        "filename": filename,
         "message": "File written and indexed for retrieval by all app pipelines.",
     }
 
 
 @router.delete("/delete/{filename}", status_code=status.HTTP_200_OK)
-async def delete_document(
-    filename: str, auth_data: dict = Depends(verify_token_and_get_role)
+def delete_document(
+    filename: str, request: Request, auth_data: dict = Depends(verify_token_and_get_role)
 ):
     """Purges physical files and corresponding vector spaces matching metadata footprints."""
     if auth_data["role"] != "Admin":
@@ -149,17 +129,15 @@ async def delete_document(
             detail="Administrative authorization required for data purges.",
         )
 
-    file_path = os.path.join(STORAGE_DIR, filename)
-    if not os.path.exists(file_path):
+    if Path(filename).name != filename or any(character in filename for character in "/\\:"):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    file_path = STORAGE_DIR / filename
+    if not file_path.is_file():
         raise HTTPException(
             status_code=404, detail="Target document not found in persistent layer."
         )
 
-    # Delete physical artifact
-    os.remove(file_path)
-
-    # Purge related vector coordinates using standard metadata matching
-    # collection.delete(where={"source": filename})
+    request.app.state.delete_indexed_document(file_path)
 
     return {
         "status": "Purged",
