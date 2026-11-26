@@ -1,3 +1,4 @@
+import logging
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,6 +8,15 @@ import jwt
 
 router = APIRouter(prefix="/api/documents", tags=["Secure Document Ingestion"])
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
+
+
+class DocumentParseError(ValueError):
+    pass
+
+
+class DocumentLockedError(Exception):
+    pass
 
 # Configuration Boundaries
 SECRET_KEY = "ENTERPRISE_CORE_SECRET_KEY_PLACEHOLDER"  # Store in .env in production
@@ -106,9 +116,16 @@ def upload_document(
             request.app.state.index_document(
                 staged, filename, auth_data["user_id"], STORAGE_DIR / filename
             )
-    except ValueError as exc:
+    except DocumentParseError as exc:
+        logger.warning("Could not parse upload %r", filename, exc_info=True)
         raise HTTPException(status_code=422, detail="Could not extract document text.") from exc
+    except DocumentLockedError as exc:
+        logger.warning("Could not replace locked document %r", filename, exc_info=True)
+        raise HTTPException(
+            status_code=409, detail="The destination file is locked. Close it and retry."
+        ) from exc
     except Exception as exc:
+        logger.exception("Document indexing failed for %r", filename)
         raise HTTPException(status_code=500, detail="Document indexing failed.") from exc
 
     return {

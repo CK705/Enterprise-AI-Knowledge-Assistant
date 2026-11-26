@@ -1,7 +1,29 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import './App.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+
+const answerComponents = {
+  table: ({ node, ...props }) => (
+    <div className="answer-table-scroll" tabIndex={0} role="region" aria-label="Answer table">
+      <table {...props} />
+    </div>
+  ),
+};
+
+function Answer({ result, loading, loadingText }) {
+  if (!result) {
+    return <p>{loading ? loadingText : 'Awaiting execution...'}</p>;
+  }
+
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={answerComponents}>
+      {result.answer}
+    </ReactMarkdown>
+  );
+}
 
 const formatApiError = (payload) => {
   if (!payload) return 'Upload failed.';
@@ -224,7 +246,7 @@ function App() {
             {naiveResult?.latency && <span className="pill telemetry">⏱️ {naiveResult.latency}s</span>}
           </div>
           <div className="answer-viewport">
-            <p>{naiveResult ? naiveResult.answer : (loadingA ? "Processing Turn..." : "Awaiting execution...")}</p>
+            <Answer result={naiveResult} loading={loadingA} loadingText="Processing Turn..." />
           </div>
         </div>
 
@@ -235,7 +257,7 @@ function App() {
             {hybridResult?.latency && <span className="pill telemetry">⏱️ {hybridResult.latency}s</span>}
           </div>
           <div className="answer-viewport">
-            <p>{hybridResult ? hybridResult.answer : (loadingB ? "Processing Turn..." : "Awaiting execution...")}</p>
+            <Answer result={hybridResult} loading={loadingB} loadingText="Processing Turn..." />
           </div>
         </div>
 
@@ -246,7 +268,7 @@ function App() {
             {multiHopResult?.latency && <span className="pill telemetry optimal">⏱️ {multiHopResult.latency}s</span>}
           </div>
           <div className="answer-viewport">
-            <p className="reasoned-response">{multiHopResult ? multiHopResult.answer : (loadingC ? "Decomposing queries & linking hops..." : "Awaiting execution...")}</p>
+            <Answer result={multiHopResult} loading={loadingC} loadingText="Decomposing queries & linking hops..." />
           </div>
         </div>
 
@@ -257,7 +279,7 @@ function App() {
             {selfCorrectResult?.latency && <span className="pill telemetry judge">⏱️ {selfCorrectResult.latency}s</span>}
           </div>
           <div className="answer-viewport">
-            <p>{selfCorrectResult ? selfCorrectResult.answer : (loadingD ? "Grading retrieved context..." : "Awaiting execution...")}</p>
+            <Answer result={selfCorrectResult} loading={loadingD} loadingText="Grading retrieved context..." />
           </div>
         </div>
       </section>

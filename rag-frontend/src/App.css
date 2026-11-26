@@ -129,6 +129,7 @@ body {
 
 /* 5. The Pipeline Cards */
 .pipeline-card {
+  min-width: 0;
   background: var(--card-bg);
   border-radius: 16px;
   padding: 24px;
@@ -195,6 +196,7 @@ body {
 /* 7. Answer Viewport */
 .answer-viewport {
   flex-grow: 1; /* Pushes content down to keep cards equal height */
+  min-width: 0;
 }
 
 .answer-viewport h4 {
@@ -207,6 +209,30 @@ body {
   line-height: 1.6;
   font-size: 0.95rem;
   white-space: pre-wrap; /* Preserves LLM line breaks */
+}
+
+.answer-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.answer-viewport table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.answer-viewport th,
+.answer-viewport td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.answer-viewport th {
+  background-color: #f1f5f9;
+  color: #334155;
 }
 
 /* 8. The Agent Plan Box (Pipeline C) */

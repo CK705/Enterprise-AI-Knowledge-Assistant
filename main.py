@@ -1,8 +1,11 @@
 import os
 import json
+import logging
 import time
 from hashlib import sha256
 from threading import Lock
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
@@ -10,13 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
+from pypdf.errors import PdfReadError
 
 load_dotenv()
 
 # LangChain Framework & Vector Core
-from langchain_groq import ChatGroq
+from llm_router import build_chat, build_embeddings
 from langchain_chroma import Chroma
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -35,15 +38,15 @@ DB_DIR = BASE_DIR / "enterprise_rag_db"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
-llm = ChatGroq(temperature=0, model_name="openai/gpt-oss-120b")
-# llm = ChatGroq(temperature=0, model_name="openai/gpt-oss-safeguard-20b")
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+llm = build_chat()
+embeddings = build_embeddings()
 vectorstore = Chroma(
     collection_name="langchain",
     persist_directory=str(DB_DIR),
     embedding_function=embeddings,
 )
 index_lock = Lock()
+logger = logging.getLogger(__name__)
 document_loaders = {".pdf": PyPDFLoader, ".docx": Docx2txtLoader}
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 
@@ -67,23 +70,37 @@ def filter_docs_by_role(docs: List[Document], user_role: str) -> List[Document]:
     return docs or []
 
 
-def index_document(path: Path, filename: str, owner_id: str, destination: Path | None = None):
-    """Index a staged upload or a file already in storage."""
-    loader = document_loaders.get(Path(filename).suffix.lower())
-    if loader is None:
-        raise ValueError("Only PDF and DOCX files are supported.")
-    chunks = [
-        chunk for chunk in text_splitter.split_documents(loader(path).load())
-        if chunk.page_content.strip()
-    ]
-    if not chunks:
-        raise ValueError("The document contains no extractable text.")
-
+def document_digest(path: Path) -> str:
     digest = sha256()
     with path.open("rb") as document:
         for block in iter(lambda: document.read(1024 * 1024), b""):
             digest.update(block)
-    revision = digest.hexdigest()
+    return digest.hexdigest()
+
+
+def index_document(
+    path: Path, filename: str, owner_id: str, destination: Path | None = None
+):
+    """Index a staged upload or a file already in storage."""
+    loader = document_loaders.get(Path(filename).suffix.lower())
+    if loader is None:
+        raise auth_storage.DocumentParseError("Only PDF and DOCX files are supported.")
+    try:
+        chunks = [
+            chunk
+            for chunk in text_splitter.split_documents(loader(str(path)).load())
+            if chunk.page_content.strip()
+        ]
+    except (ValueError, OSError, BadZipFile, ParseError, PdfReadError) as exc:
+        raise auth_storage.DocumentParseError(
+            "Could not extract document text."
+        ) from exc
+    if not chunks:
+        raise auth_storage.DocumentParseError(
+            "The document contains no extractable text."
+        )
+
+    revision = document_digest(path)
     chunk_ids = [f"{filename}:{revision}:{i}" for i in range(len(chunks))]
     for chunk in chunks:
         if "file_path" in chunk.metadata:
@@ -95,15 +112,29 @@ def index_document(path: Path, filename: str, owner_id: str, destination: Path |
         )
 
     with index_lock:
+        if destination is not None and destination.is_file():
+            try:
+                if document_digest(destination) == revision:
+                    destination = None
+            except PermissionError as exc:
+                raise auth_storage.DocumentLockedError(filename) from exc
         previous = indexed_chunk_ids(filename)
         new_ids = sorted(set(chunk_ids).difference(previous))
         try:
             vectorstore.add_documents(chunks, ids=chunk_ids)
             if destination is not None:
-                path.replace(destination)
+                try:
+                    path.replace(destination)
+                except PermissionError as exc:
+                    if getattr(exc, "winerror", None) in (5, 32, 33):
+                        raise auth_storage.DocumentLockedError(filename) from exc
+                    raise
         except Exception:
             if new_ids:
-                vectorstore.delete(ids=new_ids)
+                try:
+                    vectorstore.delete(ids=new_ids)
+                except Exception:
+                    logger.exception("Could not roll back chunks for %r", filename)
             raise
 
         stale_ids = sorted(set(previous).difference(chunk_ids))
@@ -116,7 +147,8 @@ def indexed_chunk_ids(filename: str) -> list[str]:
     return [
         chunk_id
         for chunk_id, metadata in zip(existing["ids"], existing["metadatas"])
-        if metadata and Path(metadata.get("source") or "").name.casefold() == filename.casefold()
+        if metadata
+        and Path(metadata.get("source") or "").name.casefold() == filename.casefold()
     ]
 
 
@@ -141,12 +173,13 @@ async def lifespan(app: FastAPI):
         if (
             path.is_file()
             and path.suffix.lower() in document_loaders
+            and not path.name.startswith("~$")
             and path.name.casefold() not in indexed_names
         ):
             try:
                 index_document(path, path.name, owner_id="system")
-            except Exception as exc:
-                print(f"Failed to index {path.name}: {exc}")
+            except Exception:
+                logger.exception("Startup indexing failed for %r", path.name)
     yield
 
 
@@ -178,6 +211,21 @@ class RAGResponse(BaseModel):
     correction_log: Optional[str] = None
 
 
+TABLE_FORMAT_INSTRUCTIONS = (
+    "Format multi-item comparisons, schedules, metrics, and structured records "
+    "as GitHub-Flavored Markdown tables. Use clear column headers, a separator "
+    "row, and one row per record. Leave a blank line before the table and place "
+    "any explanation outside it. Never wrap the table in a code fence or output "
+    "bare pipe-separated text."
+)
+
+
+def answer_prompt(template: str) -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages(
+        [("system", TABLE_FORMAT_INSTRUCTIONS), ("human", template)]
+    )
+
+
 # --- PIPELINE A: NAIVE RAG (SECURED) ---
 @app.post("/query/naive", response_model=RAGResponse)
 async def query_naive(
@@ -198,8 +246,8 @@ async def query_naive(
             retrieved_chunks=[],
         )
 
-    prompt = ChatPromptTemplate.from_template(
-        "Answer using context.\n\nContext:\n{context}\n\nQuestion: {question}"
+    prompt = answer_prompt(
+        "Answer using context.\n\n" "Context:\n{context}\n\nQuestion: {question}"
     )
     response = (prompt | llm).invoke({"context": context, "question": request.question})
 
@@ -237,8 +285,8 @@ async def query_hybrid(
     combined_dict = {d.page_content: d for d in (vec_docs + bm25_docs)}
     context = "\n\n".join(combined_dict.keys())
 
-    prompt = ChatPromptTemplate.from_template(
-        "Answer using hybrid context.\n\nContext:\n{context}\n\nQuestion: {question}"
+    prompt = answer_prompt(
+        "Answer using hybrid context.\n\n" "Context:\n{context}\n\nQuestion: {question}"
     )
     response = (prompt | llm).invoke({"context": context, "question": request.question})
 
@@ -275,9 +323,7 @@ async def query_multihop(
     context = "\n\n".join([d.page_content for d in (docs_hop1 + docs_hop2)])
 
     synth_response = (
-        ChatPromptTemplate.from_template(
-            "Synthesize.\nContext:\n{context}\nQuestion: {question}"
-        )
+        answer_prompt("Synthesize.\n\n" "Context:\n{context}\n\nQuestion: {question}")
         | llm
     ).invoke({"context": context, "question": request.question})
 
@@ -313,8 +359,9 @@ async def query_crag(
         correction_log += " Context valid. Synthesizing response."
         answer = (
             (
-                ChatPromptTemplate.from_template(
-                    "Answer based strictly on context.\nContext:\n{context}\nQuestion: {question}"
+                answer_prompt(
+                    "Answer based strictly on context.\n\n"
+                    "Context:\n{context}\n\nQuestion: {question}"
                 )
                 | llm
             )
