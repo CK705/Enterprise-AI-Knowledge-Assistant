@@ -226,6 +226,18 @@ def answer_prompt(template: str) -> ChatPromptTemplate:
     )
 
 
+def chat_token_usage(*messages) -> dict[str, int] | None:
+    """Sum provider-reported chat usage, or return unavailable for incomplete data."""
+    totals = {"input_tokens": 0, "output_tokens": 0}
+    for message in messages:
+        usage = getattr(message, "usage_metadata", None)
+        if not usage or any(usage.get(key) is None for key in totals):
+            return None
+        for key in totals:
+            totals[key] += usage[key]
+    return {**totals, "total_tokens": sum(totals.values())}
+
+
 # --- PIPELINE A: NAIVE RAG (SECURED) ---
 @app.post("/query/naive", response_model=RAGResponse)
 async def query_naive(
@@ -244,6 +256,8 @@ async def query_naive(
             pipeline="Naive",
             answer="Access Denied or No Data Found.",
             retrieved_chunks=[],
+            latency=round(time.time() - start_time, 2),
+            tokens=chat_token_usage(),
         )
 
     prompt = answer_prompt(
@@ -256,7 +270,7 @@ async def query_naive(
         answer=response.content,
         retrieved_chunks=[d.page_content for d in docs],
         latency=round(time.time() - start_time, 2),
-        tokens=getattr(response, "usage_metadata", None) or {},
+        tokens=chat_token_usage(response),
     )
 
 
@@ -295,6 +309,7 @@ async def query_hybrid(
         answer=response.content,
         retrieved_chunks=list(combined_dict.keys()),
         latency=round(time.time() - start_time, 2),
+        tokens=chat_token_usage(response),
     )
 
 
@@ -333,6 +348,7 @@ async def query_multihop(
         retrieved_chunks=[d.page_content for d in (docs_hop1 + docs_hop2)],
         plan=plan,
         latency=round(time.time() - start_time, 2),
+        tokens=chat_token_usage(plan_response, synth_response),
     )
 
 
@@ -349,25 +365,25 @@ async def query_crag(
 
     # 2. Grade (LLM-as-a-judge)
     grade_prompt = f"Does this context '{context}' contain the answer to '{request.question}'? Reply ONLY with YES or NO."
-    grade = llm.invoke(grade_prompt).content.strip().upper()
+    grade_response = llm.invoke(grade_prompt)
+    grade = grade_response.content.strip().upper()
 
     correction_log = f"Grader Evaluation: {grade}."
     if "NO" in grade:
         correction_log += " Context insufficient. Triggering safety refusal."
         answer = "I'm sorry, but based on the securely available corporate data, I cannot answer this request without hallucinating."
+        tokens = chat_token_usage(grade_response)
     else:
         correction_log += " Context valid. Synthesizing response."
-        answer = (
-            (
-                answer_prompt(
-                    "Answer based strictly on context.\n\n"
-                    "Context:\n{context}\n\nQuestion: {question}"
-                )
-                | llm
+        answer_response = (
+            answer_prompt(
+                "Answer based strictly on context.\n\n"
+                "Context:\n{context}\n\nQuestion: {question}"
             )
-            .invoke({"context": context, "question": request.question})
-            .content
-        )
+            | llm
+        ).invoke({"context": context, "question": request.question})
+        answer = answer_response.content
+        tokens = chat_token_usage(grade_response, answer_response)
 
     return RAGResponse(
         pipeline="CRAG",
@@ -375,6 +391,7 @@ async def query_crag(
         retrieved_chunks=[d.page_content for d in docs],
         correction_log=correction_log,
         latency=round(time.time() - start_time, 2),
+        tokens=tokens,
     )
 
 
