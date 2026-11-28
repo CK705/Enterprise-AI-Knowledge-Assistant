@@ -145,3 +145,13 @@ h1, h2, h3, p { margin: 0; }
   .login-page { align-content: center; }
   .login-intro h1 { margin-top: 21px; }
 }
+
+:root{--accent:#50417b;--muted:#625d70;--line:#ded9e6;--ink:#272537;background:#f4f3ef;color:var(--ink)}
+.workspace,.main-panel,.login-page{background:#f4f3ef}
+.sidebar,.login-intro{background:#242538;color:#f4eefc}
+.brand-mark,.primary{background:#50417b;color:white}
+.page-header h1,.login-intro h1,.login-card h2{font-family:Georgia,serif;font-weight:normal;letter-spacing:-.045em}
+.result-card,.composer,.login-card{border:1px solid var(--line);border-radius:1rem;box-shadow:0 6px 24px #3426410b}
+.pipeline-options button[aria-pressed=true]{background:#e9e2f3;color:#38294b;border-color:#9b86b6}
+.result-metrics .metric,.secondary{background:#f1edf6;color:#49395e}
+.table-scroll th{background:#eee9f4}

@@ -2,6 +2,16 @@
 
 This M.Tech research project at IIT Patna compares four retrieval-augmented generation pipelines for enterprise document question answering. The current demo includes a React dashboard, a FastAPI API, document uploads, and a shared persistent Chroma index.
 
+## Phase 3 ProjectFlow integration
+
+On the `phase-3` branch, ProjectFlow uses its own Supabase login, workspace membership and Content Library to authorize retrieval for private chats and proposal drafting. The internal service in this repository receives only permitted evidence. Configure the same `PHASE3_SERVICE_SECRET` on both backends and use the Groq and Google credentials described below. Start the service locally with:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn phase3_service:app --host 127.0.0.1 --port 8002
+```
+
+The companion ProjectFlow feature branch includes the workspace UI, approval workflow, pgvector migrations and setup guide `KNOWLEDGE_ASSISTANT.md`. The [integration plan](PHASE_3_PROJECTFLOW_PLAN.md) describes the two user experiences. The four research pipelines below are available on the Phase 2 baseline.
+
 ## Implemented pipelines
 
 | Pipeline | API endpoint | Retrieval and generation |

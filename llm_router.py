@@ -40,10 +40,10 @@ def invoke_with_failover(clients, operation, provider, is_retryable):
             )
 
 
-def build_chat():
+def build_chat(model="openai/gpt-oss-120b"):
     keys = provider_keys("GROQ_API_KEY")
     clients = [
-        ChatGroq(model="openai/gpt-oss-120b", temperature=0, api_key=key,
+        ChatGroq(model=model, temperature=0, api_key=key,
                  max_retries=0 if len(keys) > 1 else 2)
         for key in keys
     ]
